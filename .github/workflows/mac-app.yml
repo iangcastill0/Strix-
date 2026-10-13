@@ -1,0 +1,111 @@
+name: Build macOS App
+
+# Builds a native macOS Strix.app bundle (+ DMG) for Apple Silicon and Intel by
+# compiling upstream usestrix/strix at the pinned ref (see .strix-ref) with
+# PyInstaller and wrapping it in a Terminal-launcher .app. Runs on macOS runners
+# because PyInstaller cannot cross-compile.
+
+on:
+  push:
+    branches: ["**"]
+    tags: ["app-v*"]
+  pull_request:
+    paths:
+      - ".github/workflows/mac-app.yml"
+      - "packaging/macos/**"
+      - "scripts/**"
+      - ".strix-ref"
+  workflow_dispatch:
+    inputs:
+      strix_ref:
+        description: "Upstream usestrix/strix ref to build (overrides .strix-ref)"
+        required: false
+        default: ""
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            arch: arm64
+          - os: macos-15-intel
+            arch: x86_64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout harness
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Set up Go (for the TUI sidecar)
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+
+      - name: Fetch upstream Strix
+        env:
+          STRIX_REF: ${{ github.event.inputs.strix_ref }}
+        run: |
+          if [ -z "${STRIX_REF}" ]; then unset STRIX_REF; fi
+          SRC="$(bash scripts/fetch-strix.sh)"
+          echo "STRIX_SRC=$SRC" >> "$GITHUB_ENV"
+
+      - name: Build engine binary (sidecar + PyInstaller)
+        run: |
+          cd "$STRIX_SRC"
+          make tui-build                       # -> build/sidecar/strix-tui (required by strix.spec)
+          uv sync --frozen                     # installs deps incl. pyinstaller (dev group)
+          uv run pyinstaller strix.spec --noconfirm
+          ./dist/strix --version
+
+      - name: Assemble Strix.app + DMG
+        run: |
+          STRIX_BIN="$STRIX_SRC/dist/strix" \
+          STRIX_SRC="$STRIX_SRC" \
+          ARCH="${{ matrix.arch }}" \
+          OUT="$GITHUB_WORKSPACE/out" \
+            bash packaging/macos/build-app.sh
+
+      - name: Upload macOS app artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: strix-macos-${{ matrix.arch }}
+          path: |
+            out/*.dmg
+            out/*.app.zip
+          if-no-files-found: error
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/app-v')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release
+          merge-multiple: true
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: release/**

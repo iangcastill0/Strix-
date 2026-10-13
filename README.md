@@ -24,6 +24,8 @@ dependency you rely on.
 | `scripts/build-and-test.sh` | The core gate: fetch → `uv sync` → CLI smoke → `uv build --wheel` → `pytest`. Used by CI and locally. |
 | `scripts/known-failures.txt` | Pytest node IDs deselected because they fail **upstream** at the pinned ref (documented, data/timing-sensitive, unrelated to build health). |
 | `.github/workflows/ci.yml` | GitHub Actions: runs the gate on push / PR / weekly schedule / manual dispatch, across Python 3.12 and 3.13, and uploads the built wheel. |
+| `.github/workflows/mac-app.yml` | GitHub Actions (macOS runners): builds a native **`Strix.app` + DMG** for Apple Silicon and Intel. |
+| `packaging/macos/` | The macOS app packaging: `build-app.sh`, the `Strix.launcher.sh` bundle executable, and `Info.plist.template`. |
 | `.claude/hooks/session-start.sh` | Claude Code **cloud** SessionStart hook: fetches upstream + `uv sync` so a cloud session can build/test Strix immediately. |
 | `.claude/settings.json` | Registers the SessionStart hook. |
 
@@ -78,6 +80,47 @@ for the exact node IDs and rationale):
 A green CI run therefore means *"Strix builds and nothing new regressed"* rather
 than hiding these pre-existing failures silently. If this list ever grows on a
 bump, treat it as a signal and investigate before merging.
+
+## Native macOS app (`Strix.app` + DMG)
+
+The [`Build macOS App`](./.github/workflows/mac-app.yml) workflow builds a native
+`Strix.app` bundle and a `.dmg` installer for **Apple Silicon (arm64)** and
+**Intel (x86_64)** — no Python install required on the end-user's Mac. It runs
+on GitHub-hosted macOS runners because PyInstaller cannot cross-compile; you
+cannot build the Mac app from a Linux machine.
+
+How it's built, per arch, from the pinned upstream ref:
+
+1. `make tui-build` compiles the Go TUI sidecar.
+2. `uv sync --frozen` + `uv run pyinstaller strix.spec` produce a self-contained
+   `strix` engine binary (upstream's own PyInstaller spec).
+3. `packaging/macos/build-app.sh` wraps that binary in `Strix.app` — a
+   Terminal-launcher app (`Strix.launcher.sh`) with an `Info.plist` and an icon
+   generated from upstream's viewer logo — ad-hoc signs it, and packages a DMG
+   with an `/Applications` drop target.
+
+**Get the app:**
+
+- Push a tag `app-v*` (e.g. `app-v1.7.0`) to publish a GitHub Release with the
+  DMGs and zipped apps attached, **or**
+- Run the workflow manually (Actions → *Build macOS App* → *Run workflow*) and
+  download the `strix-macos-arm64` / `strix-macos-x86_64` artifacts.
+
+**What the app does:** double-clicking `Strix.app` opens Terminal with the
+bundled `strix` command ready (`strix --target …`, `strix view`, `strix --help`).
+It is a native wrapper around the Strix engine, not a separate GUI.
+
+**Important caveats:**
+
+- **Docker is still required.** The app checks for Docker Desktop on launch and
+  warns if it's missing or not running — native packaging removes the Python
+  install step, not Strix's Docker dependency.
+- **Gatekeeper.** The app is only *ad-hoc* signed (enough to launch, especially
+  on Apple Silicon). Because it isn't signed with an Apple Developer ID or
+  notarized, macOS will warn on first open of a downloaded copy — right-click →
+  **Open** once, or run `xattr -dr com.apple.quarantine /Applications/Strix.app`.
+  To ship without that warning, add a Developer ID certificate + notarization
+  step (wire the signing identity in as repo secrets).
 
 ## Claude Code cloud sessions
 
