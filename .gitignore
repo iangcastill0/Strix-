@@ -1,0 +1,12 @@
+# Upstream Strix source is fetched on demand, never committed here.
+/.upstream/
+
+# Build / Python artifacts (should only ever appear inside .upstream/ anyway)
+dist/
+*.whl
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
