@@ -1,0 +1,65 @@
+name: Build & Test Strix
+
+# CI/build-verification harness for upstream usestrix/strix.
+# This repo does not vendor Strix; it fetches the pinned ref (see .strix-ref),
+# builds the wheel (incl. the Go TUI sidecar) and runs the test suite.
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      strix_ref:
+        description: "Upstream usestrix/strix ref to build (overrides .strix-ref)"
+        required: false
+        default: ""
+  schedule:
+    # Weekly (Mon 06:17 UTC) against the default branch, to catch upstream drift.
+    - cron: "17 6 * * 1"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.12", "3.13"]
+    steps:
+      - name: Checkout harness
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          enable-cache: true
+
+      - name: Set up Go (for the TUI sidecar compiled into the wheel)
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+
+      - name: Build & test Strix
+        env:
+          # Empty unless triggered via workflow_dispatch with an override.
+          STRIX_REF: ${{ github.event.inputs.strix_ref }}
+        run: |
+          # Fall back to the pinned .strix-ref when no override is supplied.
+          if [ -z "${STRIX_REF}" ]; then unset STRIX_REF; fi
+          bash scripts/build-and-test.sh
+
+      - name: Upload built wheel
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: strix-wheel-py${{ matrix.python-version }}
+          path: .upstream/strix/dist/*.whl
+          if-no-files-found: ignore
