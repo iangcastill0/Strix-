@@ -1,0 +1,14 @@
+# Pytest node IDs that are known to FAIL in upstream usestrix/strix at the
+# pinned ref (see ../.strix-ref). The CI build-and-test step deselects these so
+# a green run means "the build is healthy and nothing NEW regressed" rather than
+# being permanently red on pre-existing, unrelated failures.
+#
+# Both are data/timing-sensitive and are unrelated to packaging/build health:
+#   - cost estimate test depends on litellm's bundled model price map resolving
+#     a specific model name; the resolver returns nothing so no cost is recorded.
+#   - mcp resilience test is an async-timing assertion.
+#
+# Review this list on every ref bump: drop any entry that upstream has fixed, and
+# add newly-discovered pre-existing failures with a one-line reason above them.
+tests/test_cost_tracking.py::test_cost_callback_estimates_cost_with_provider_prefixed_model
+tests/test_mcp_resilience.py::test_http_factory_awaits_response_recorder
